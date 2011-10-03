@@ -1,8 +1,11 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <termios.h>
 #include <fcntl.h>
 #include <pthread.h>
+
+#define DEVICE "/dev/ttyS4"
 
 static int avr;
 
@@ -15,36 +18,54 @@ void *read_from_avr (void *args)
 
 	while(1)
 	{
-		count = read(avr, buf, 1);
+		count = read(avr, buf, 2);
 	
 		if(count > 0)
 		{
-			printf("received %x, %x, %x, %x\n", buf[0], buf[1], buf[2], buf[3]);
-			return NULL;
+			printf("received 0x%x%02x,\n", buf[1], buf[0]);
 		}
-		else
-			printf("nothing received from avr\n");
 	}
 
 	return NULL;
 }
 
+int open_port(void){
+	int fd_ser;
+	struct termios terminal;
+	fd_ser = open(DEVICE, O_RDWR | O_NOCTTY);
+
+	if (fd_ser == -1)
+	{
+		printf("Error opening %s\n", DEVICE);
+		return -1;
+	}
+
+	tcgetattr(fd_ser, &terminal);
+	
+	//
+	// No line processing:
+	// canonical mode off
+	//
+	terminal.c_lflag &= ~(ICANON);
+
+	tcflush(fd_ser,TCIOFLUSH);
+	tcsetattr(fd_ser,TCSANOW,&terminal);
+	return fd_ser;
+}
+
 int main(void)
 {
-	uint8_t reset_off[4] = { 0x87, 0x01, 0x0E, 0x01 };	 // '\x87''\x01''\x0E''\x01'
-	uint8_t reset_all[4] = { 0x85, 0x01, 0x10, 0x01 };	 // '\x87''\x01''\x0E''\x01'
-
-	char avr_devname[11] = "/dev/ttyS4";
+	uint8_t reset_off[4] = { 0x87, 0x01, 0x0E, 0x01 };
+	uint8_t reset_all[4] = { 0x85, 0x01, 0x10, 0x01 };
 
 	pthread_t read_thread;
 
 	printf("Simple AVR test program\n");
 
 	// *** open the device nodes ***
-	avr = open((char *)avr_devname, O_RDWR | O_NOCTTY);
+	avr = open_port();
 
 	if(avr < 0) {
-		printf("Error opening %s\n",avr_devname);
 		return -1;
 	}
 
