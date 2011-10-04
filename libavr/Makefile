@@ -4,9 +4,9 @@ AR=$(CROSS)ar
 LD=$(CROSS)ld
 CFLAGS=-c -Wall
 LDFLAGS=-lpthread
-SOURCES=avr.c
+SOURCES=libavr.c
 OBJECTS=$(SOURCES:.c=.o)
-EXECUTABLE=avr.a
+EXECUTABLE=libavr.a
 
 all: $(SOURCES) $(EXECUTABLE)
 	

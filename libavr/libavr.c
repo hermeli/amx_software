@@ -12,14 +12,14 @@
 ***********************************************************************/
 
 #include <stdio.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <termios.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <errno.h>
 
-#include "avr.h"
+#include "libavr.h"
 
 #define DEVICE 					"/dev/ttyS4"
 #define QUEUE_MASK				511
@@ -31,54 +31,58 @@ typedef struct
 	uint8_t data[QUEUE_MASK + 1];
 	int read;
 	int write;
+	pthread_mutex_t *mutex;
 } queue_t;
 
-static int avr;
+typedef struct
+{
+	int port;
 
-static queue_t event_queue;
-static queue_t answer_queue;
-static queue_t data_queue;
+	queue_t event_queue;
+	queue_t answer_queue;
+	queue_t data_queue;
 
-static pthread_t read_thread;
+	pthread_t read_thread;
 
-static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t avr_mutex = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_t queue_mutex;
+	pthread_mutex_t avr_mutex;
+} avr_struct_t, *avr_t;
 
 uint8_t enqueue(uint8_t data, queue_t *queue)
 {
 	uint32_t next;
 	
-	pthread_mutex_lock(&queue_mutex);
+	pthread_mutex_lock(queue->mutex);
 	
 	next = ((queue->write + 1) & QUEUE_MASK);
 	
 	if (queue->read == next)
 	{
-		pthread_mutex_unlock(&queue_mutex);
+		pthread_mutex_unlock(queue->mutex);
 		return 0;
 	}
 	
 	queue->data[queue->write] = data;
 	queue->write = next;
 	
-	pthread_mutex_unlock(&queue_mutex);
+	pthread_mutex_unlock(queue->mutex);
 	return 1;
 }
 
 uint8_t dequeue(uint8_t *data, queue_t *queue)
 {
-	pthread_mutex_lock(&queue_mutex);
+	pthread_mutex_lock(queue->mutex);
 	
 	if (queue->read == queue->write)
 	{
-		pthread_mutex_unlock(&queue_mutex);
+		pthread_mutex_unlock(queue->mutex);
 		return 0;
 	}
 	
 	*data = queue->data[queue->read];
 	queue->read = ((queue->read + 1) & QUEUE_MASK);
 	
-	pthread_mutex_unlock(&queue_mutex);
+	pthread_mutex_unlock(queue->mutex);
 	return 1;
 }
 
@@ -86,23 +90,23 @@ int count_queue(queue_t *queue)
 {
 	int count;
 	
-	pthread_mutex_lock(&queue_mutex);
+	pthread_mutex_lock(queue->mutex);
 	
 	count = ((queue->write - queue->read) & QUEUE_MASK);
 	
-	pthread_mutex_unlock(&queue_mutex);
+	pthread_mutex_unlock(queue->mutex);
 	
 	return count;
 }
 
 void init_queue(queue_t *queue)
 {
-	pthread_mutex_lock(&queue_mutex);
+	pthread_mutex_lock(queue->mutex);
 	
 	queue->write = 0;
 	queue->read = 0;
 	
-	pthread_mutex_unlock(&queue_mutex);
+	pthread_mutex_unlock(queue->mutex);
 }
 
 int __nsleep(const struct timespec *req, struct timespec *rem)
@@ -176,7 +180,7 @@ uint8_t calculate_right_type(uint8_t buffer)
 	return retbit;
 }
 
-void enqueue_to_right_queue(uint8_t *buffer, int length)
+void enqueue_to_right_queue(avr_t avr, uint8_t *buffer, int length)
 {
 	int pos = length - 1;
 
@@ -188,18 +192,18 @@ void enqueue_to_right_queue(uint8_t *buffer, int length)
 		printf("[IST] Answer=0x%02x\r", buffer[pos]);
 
 		if(length > 1)
-			enqueue(buffer[pos],&data_queue);
+			enqueue(buffer[pos],&(avr->data_queue));
 		else
-			enqueue(buffer[pos],&answer_queue);
+			enqueue(buffer[pos],&(avr->answer_queue));
 		break;
 	case 0x02: 
 		printf("[IST] Event=0x%02x\r", buffer[pos]);
-		enqueue(buffer[pos],&event_queue);
+		enqueue(buffer[pos],&(avr->event_queue));
 		break;
 	}
 }
 
-void decode_avr_packet(uint16_t *ptmp, int length)
+void decode_avr_packet(avr_t avr, uint16_t *ptmp, int length)
 {
 	uint8_t tmpbuf[TEMP_BUFFER_SIZE];
 	int tmppos = 0;
@@ -216,7 +220,7 @@ void decode_avr_packet(uint16_t *ptmp, int length)
 			{
 				tmpbuf[0]=(uint8_t)data;
 				tmppos=1;
-				enqueue_to_right_queue(tmpbuf, tmppos);
+				enqueue_to_right_queue(avr, tmpbuf, tmppos);
 			}
 			else
 			{
@@ -255,7 +259,7 @@ void decode_avr_packet(uint16_t *ptmp, int length)
 			if ((tmppos > 0) && (tmppos < (TEMP_BUFFER_SIZE - 1)))
 			{
 				tmpbuf[tmppos++]=(uint8_t)data;	
-				enqueue_to_right_queue(tmpbuf, tmppos);
+				enqueue_to_right_queue(avr, tmpbuf, tmppos);
 				//Enqueue((BYTE)data,&DataQueue);
 			}
 			else 
@@ -266,6 +270,7 @@ void decode_avr_packet(uint16_t *ptmp, int length)
 
 void *read_from_avr (void *args)
 {
+	avr_t avr = (avr_t)args;
 	uint8_t buf[4];
 	uint16_t avr_received;
 	int count;
@@ -274,17 +279,28 @@ void *read_from_avr (void *args)
 
 	while(1)
 	{
-		count = read(avr, buf, 2);
+		count = read(avr->port, buf, 2);
 	
 		if(count == 2)
 		{
 			printf("received 0x%x%02x,\n", buf[1], buf[0]);
 			avr_received = (0xFF00 & (buf[1] << 8)) | buf[0];
-			decode_avr_packet(&avr_received, 1);
+			decode_avr_packet(avr, &avr_received, 1);
 		}
 		else
 		{
 			printf("error: received %d,\n", count);
+			
+			if(count == -1)
+			{
+				printf("error: errno: %d!", errno);
+				
+				if(errno == EBADF)
+				{
+					printf("error: port is not open for reading!");
+					break;
+				}
+			}
 		}
 	}
 
@@ -315,32 +331,50 @@ int open_port(void){
 	return fd_ser;
 }
 
-uint8_t avr_initialize(void)
+int avr_initialize(void)
 {
 	// *** open the device nodes ***
-	avr = open_port();
+	avr_t ld;
+	int rc;
+	
+	ld = (avr_t)malloc(sizeof(avr_struct_t));
+	
+	ld->port = open_port();
 
-	if(avr < 0) {
+	if(ld->port < 0) {
+		free(ld);
 		return 0;
 	}
 	
-	init_queue(&event_queue);
-	init_queue(&answer_queue);
-	init_queue(&data_queue);
-
-	pthread_create(&read_thread, NULL, read_from_avr, NULL);
+	if((rc = pthread_mutex_init(&(ld->queue_mutex), NULL)))
+	{
+		free(ld);
+		return 0;
+	}
 	
-	return 1;
+	if((rc = pthread_mutex_init(&(ld->avr_mutex), NULL)))
+	{
+		free(ld);
+		return 0;
+	}
+	
+	init_queue(&(ld->event_queue));
+	init_queue(&(ld->answer_queue));
+	init_queue(&(ld->data_queue));
+
+	pthread_create(&(ld->read_thread), (void *)ld, read_from_avr, NULL);
+	
+	return (int)ld;
 }
 
-uint8_t avr_wait_and_check_answer(uint8_t command)
+uint8_t avr_wait_and_check_answer(avr_t avr, uint8_t command)
 {
 	uint8_t avr_answer;
 	int timeout = 0;
 
 	while(timeout++ < 100)
 	{
-		if(count_queue(&answer_queue) > 0)
+		if(count_queue(&(avr->answer_queue)) > 0)
 			break;
 			
 		msleep(10);
@@ -349,7 +383,7 @@ uint8_t avr_wait_and_check_answer(uint8_t command)
 	if(timeout == 100)
 		return 0;
 
-	if (!dequeue(&avr_answer, &answer_queue))
+	if (!dequeue(&avr_answer, &(avr->answer_queue)))
 	{
 		printf("[AVR] Error: No AVR answer in queue\r\n");
 		return 0;
@@ -364,7 +398,7 @@ uint8_t avr_wait_and_check_answer(uint8_t command)
 	return 1;
 }
 
-uint8_t avr_send(uint8_t *send_buffer, int length)
+uint8_t avr_send(avr_t avr, uint8_t *send_buffer, int length)
 {
 	uint16_t  *tx_buffer;
 	int i;
@@ -387,16 +421,17 @@ uint8_t avr_send(uint8_t *send_buffer, int length)
 	tx_buffer[0] |= 0x0100;
 	tx_buffer[length] = sum | 0x0100;
 
-	write(avr, tx_buffer, tx_buffer_lenth);
+	write(avr->port, tx_buffer, tx_buffer_lenth);
 	
 	free(tx_buffer);
 	return 1;
 }
 	
 
-uint8_t avr_transmit(uint8_t *send_buffer, int send_length,
+uint8_t avr_transmit(int ld, uint8_t *send_buffer, int send_length,
 	uint8_t *receive_buffer, int *receive_buffer_length)
 {
+	avr_t avr = (avr_t)ld;
 	uint8_t avr_data;
 	uint8_t *pTmp;
 	int receive_count;
@@ -406,30 +441,30 @@ uint8_t avr_transmit(uint8_t *send_buffer, int send_length,
 		return 0;
 	}
 
-	while (dequeue(&avr_data, &answer_queue));
-	while (dequeue(&avr_data, &data_queue));
+	while (dequeue(&avr_data, &(avr->answer_queue)));
+	while (dequeue(&avr_data, &(avr->data_queue)));
 
 	// enter critical section for AVR tranfer
-	pthread_mutex_lock(&avr_mutex);
+	pthread_mutex_lock(&(avr->avr_mutex));
 
 	// send command to AVR
-	if (!avr_send(send_buffer, send_length))
+	if (!avr_send(avr, send_buffer, send_length))
 	{
-		pthread_mutex_unlock(&avr_mutex);
+		pthread_mutex_unlock(&(avr->avr_mutex));
 		return 0;
 	}
 	
 	// wait for answer event
-	if (!avr_wait_and_check_answer(send_buffer[0]))
+	if (!avr_wait_and_check_answer(avr, send_buffer[0]))
 	{
-		pthread_mutex_unlock(&avr_mutex);
+		pthread_mutex_unlock(&(avr->avr_mutex));
 		return 0;
 	}
 
 	// get adn return data
 	receive_count = 0;
 	pTmp = receive_buffer; 
-	while (dequeue(&avr_data, &data_queue) && *receive_buffer_length > receive_count)
+	while (dequeue(&avr_data, &(avr->data_queue)) && *receive_buffer_length > receive_count)
 	{
 		*pTmp++ = avr_data;
 		receive_count++;
@@ -437,13 +472,14 @@ uint8_t avr_transmit(uint8_t *send_buffer, int send_length,
 	
 	*receive_buffer_length = receive_count;
 
-	pthread_mutex_unlock(&avr_mutex);
+	pthread_mutex_unlock(&(avr->avr_mutex));
 	
 	return 1;
 }
 	
-uint8_t avr_get_events(uint8_t *receive_buffer, int *receive_buffer_length)
+uint8_t avr_get_events(int ld, uint8_t *receive_buffer, int *receive_buffer_length)
 {
+	avr_t avr = (avr_t)ld;
 	uint8_t avr_event;
 	int receive_count;
 	
@@ -453,42 +489,66 @@ uint8_t avr_get_events(uint8_t *receive_buffer, int *receive_buffer_length)
 	}
 
 	// enter critical section for AVR tranfer
-	pthread_mutex_lock(&avr_mutex);
+	pthread_mutex_lock(&(avr->avr_mutex));
 
 	receive_count = 0;
-	while (dequeue(&avr_event, &event_queue) && *receive_buffer_length > receive_count)
+	while (dequeue(&avr_event, &(avr->event_queue)) && *receive_buffer_length > receive_count)
 	{
-		*receive_buffer++ = avr_data;
+		*receive_buffer++ = avr_event;
 		receive_count++;
 	}
 	
 	*receive_buffer_length = receive_count;
 
-	pthread_mutex_unlock(&avr_mutex);
+	pthread_mutex_unlock(&(avr->avr_mutex));
 	
 	return 1;
 }
 
-uint8_t avr_reset_on(void)
+uint8_t avr_reset_on(int ld)
 {
 	uint8_t read_buffer[2];
 	uint8_t send_buffer[2] = { AVR_RESET_ON, 0 };
+	int read_buffer_length = 4;
 	
-	return avr_transmit(send_buffer, 1, read_buffer, 4);
+	return avr_transmit(ld, send_buffer, 1, read_buffer, 
+		&read_buffer_length);
 }
 
-uint8_t avr_reset_off(void)
+uint8_t avr_reset_off(int ld)
 {
 	uint8_t read_buffer[2];
 	uint8_t send_buffer[2] = { AVR_RESET_OFF, 0 };
+	int read_buffer_length = 4;
 	
-	return avr_transmit(send_buffer, 1, read_buffer, 4);
+	return avr_transmit(ld, send_buffer, 1, read_buffer,
+		&read_buffer_length);
 }
 
-uint8_t avr_reset_all(void)
+uint8_t avr_reset_all(int ld)
 {
 	uint8_t read_buffer[2];
 	uint8_t send_buffer[2] = { AVR_RESET_ALL, 0 };
+	int read_buffer_length = 4;
 	
-	return avr_transmit(send_buffer, 1, read_buffer, 4);
+	return avr_transmit(ld, send_buffer, 1, read_buffer,
+		&read_buffer_length);
+}
+
+uint8_t avr_close(int ld)
+{
+	avr_t avr = (avr_t)ld;
+	
+	pthread_mutex_lock(&(avr->avr_mutex));
+	
+	close(avr->port);
+	
+	pthread_mutex_unlock(&(avr->avr_mutex));
+	
+	pthread_mutex_destroy(&(avr->avr_mutex));
+	pthread_mutex_destroy(&(avr->queue_mutex));
+	
+	free(avr);
+	
+	return 1;
 }

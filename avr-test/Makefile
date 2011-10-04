@@ -1,16 +1,12 @@
 CROSS=arm-linux-
-#CROSS=arm-none-linux-gnueabi-
 CC=$(CROSS)gcc
 AR=$(CROSS)ar
 LD=$(CROSS)ld
-#CFLAGS=-c -Wall -D_REENTRANT
 CFLAGS=-c -Wall
-#LDFLAGS=-static -lpthread
-LDFLAGS=-lpthread
+LDFLAGS=-lpthread -L../libavr -lavr
 SOURCES=avr-test.c
 OBJECTS=$(SOURCES:.c=.o)
 EXECUTABLE=avr-test.bin
-# LD_LIBRARY_PATH=/home/llandis/amm/amx-buildroot/output/toolchain/uClibc-0.9.32/lib
 
 all: $(SOURCES) $(EXECUTABLE)
 	

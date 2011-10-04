@@ -1,87 +1,38 @@
+
 #include <stdio.h>
-#include <stdint.h>
 #include <unistd.h>
-#include <termios.h>
-#include <fcntl.h>
-#include <pthread.h>
+#include <stdint.h>
+//#include "../libavr/libavr.h"
 
-#define DEVICE "/dev/ttyS4"
-
-static int avr;
-
-void *read_from_avr (void *args)
-{
-	uint8_t buf[4];
-	int count;
-
-	printf("start reading from avr\n");
-
-	while(1)
-	{
-		count = read(avr, buf, 2);
+extern int avr_open(void);
 	
-		if(count > 0)
-		{
-			printf("received 0x%x%02x,\n", buf[1], buf[0]);
-		}
-	}
-
-	return NULL;
-}
-
-int open_port(void){
-	int fd_ser;
-	struct termios terminal;
-	fd_ser = open(DEVICE, O_RDWR | O_NOCTTY);
-
-	if (fd_ser == -1)
-	{
-		printf("Error opening %s\n", DEVICE);
-		return -1;
-	}
-
-	tcgetattr(fd_ser, &terminal);
+extern uint8_t avr_transmit(int ld, uint8_t *send_buffer, int send_length,
+	uint8_t *receive_buffer, int *receive_buffer_length);
 	
-	//
-	// No line processing:
-	// canonical mode off
-	//
-	terminal.c_lflag &= ~(ICANON);
+extern uint8_t avr_get_events(int ld, uint8_t *receive_buffer, 
+	int *receive_buffer_length);
 
-	tcflush(fd_ser,TCIOFLUSH);
-	tcsetattr(fd_ser,TCSANOW,&terminal);
-	return fd_ser;
-}
+extern uint8_t avr_reset_on(int ld);
+
+extern uint8_t avr_reset_off(int ld);
+
+extern uint8_t avr_reset_all(int ld);
+
+extern uint8_t avr_close(int ld);
 
 int main(void)
 {
-	uint8_t reset_off[4] = { 0x87, 0x01, 0x0E, 0x01 };
-	uint8_t reset_all[4] = { 0x85, 0x01, 0x10, 0x01 };
+	int avr_library_descriptor = avr_open();
 
-	pthread_t read_thread;
-
-	printf("Simple AVR test program\n");
-
-	// *** open the device nodes ***
-	avr = open_port();
-
-	if(avr < 0) {
-		return -1;
-	}
-
-	pthread_create (&read_thread, NULL, read_from_avr, NULL);
-
-	write(avr, reset_off, 4);
+	avr_reset_off(avr_library_descriptor);
 
 	sleep(2);
 
-	write(avr, reset_all, 4);
+	avr_reset_on(avr_library_descriptor);
 
 	sleep(2);
 
-	pthread_join (read_thread, NULL);
-
-	close(avr);
+	avr_close(avr_library_descriptor);
 
 	return 0;
 }

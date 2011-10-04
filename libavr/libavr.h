@@ -11,8 +11,10 @@
 
 ***********************************************************************/
 
-#ifndef _AVR_H_
-#define _AVR_H_
+#ifndef _LIBAVR_H_
+#define _LIBAVR_H_
+
+#include <stdint.h>
 
 //-----------------------------------------------------------------------------
 // AVR Communication Defines & Types
@@ -34,18 +36,21 @@
 extern "C" {
 #endif
 
-uint8_t avr_initialize(void);
+int avr_open(void);
 	
-uint8_t avr_transmit(uint8_t *send_buffer, int send_length,
+uint8_t avr_transmit(int ld, uint8_t *send_buffer, int send_length,
 	uint8_t *receive_buffer, int *receive_buffer_length);
 	
-uint8_t avr_get_events(uint8_t *receive_buffer, int *receive_buffer_length);
+uint8_t avr_get_events(int ld, uint8_t *receive_buffer, 
+	int *receive_buffer_length);
 
-uint8_t avr_reset_on(void);
+uint8_t avr_reset_on(int ld);
 
-uint8_t avr_reset_off(void);
+uint8_t avr_reset_off(int ld);
 
-uint8_t avr_reset_all(void);
+uint8_t avr_reset_all(int ld);
+
+uint8_t avr_close(int ld);
 
 #ifdef __cplusplus
 }
