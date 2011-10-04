@@ -52,9 +52,9 @@ int main(void)
 
 	write(avr, reset_off, 4);
 
-	sleep(2);
+	// sleep(2);
 
-	write(avr, reset_all, 4);
+	// write(avr, reset_all, 4);
 
 	sleep(2);
 

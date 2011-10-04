@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <linux/types.h>
+#include <pthread.h>
 #include "icoc8.h"
 #include "spidev.h"
 
@@ -34,13 +35,14 @@ static void pabort(const char *s)
 /*-----------------------------------------------------------------------------
  * IC8 message defines
  *---------------------------------------------------------------------------*/
-#define GET0					0x94
-#define GET1					0x75
-#define GET2					0x76
-#define GET3					0x57
+#define GET1					0x94
+#define GET2					0x75
+#define GET3					0x76
+#define GET4					0x57
 #define CLEARBUFFER		0x5E
 #define IC8MODULE			0x99
 #define RECIERR				0xF5 
+#define BUFEMPTY			0x05
 
 /*-----------------------------------------------------------------------------
  * static vars 
@@ -172,6 +174,136 @@ int display_oc8_patterns()
 	}
 	return 1;
 }
+
+/*-----------------------------------------------------------------------------
+ * unsigned char transfer_ic8_byte(unsigned char chipsel, unsigned char data) 
+ *
+ *---------------------------------------------------------------------------*/
+unsigned char transfer_ic8_byte(unsigned char chipsel, unsigned char data)
+{
+		int ret;
+		DRVMSG xctl;
+		unsigned char txbuf[1];
+		unsigned char rxbuf[1];
+	
+		struct spi_ioc_transfer xfer = {		// SPI data tranfer structure
+			.tx_buf = (unsigned long)txbuf,
+			.rx_buf = (unsigned long)rxbuf,
+			.len = 1,
+			.delay_usecs = 0,
+			.speed_hz = 500000,
+			.bits_per_word = 8,
+		};
+
+		// setup the chip select  
+		xctl.chipsel = chipsel;
+		ret = ioctl(icoc8, IOCTL_ICOC8_SETCS, &xctl);	
+		if (ret != 0)
+		{
+			printf("transfer_ic8_byte: IOCTL_ICOC8_SETCS failed (ret=%d)\n",ret);
+			return -1;
+		}
+		
+		// send the txbuf message (and receive into rxbuf)
+		txbuf[0] = data;
+		ret = ioctl(spidev, SPI_IOC_MESSAGE(1), &xfer);
+		if (ret != 1)
+		{
+			printf("transfer_ic8_byte: SPI_IOC_MESSAGE failed (ret=%d).\n",ret);
+			return -1;
+		}	
+
+		// setup the chip select  
+		xctl.chipsel = 0xF;
+		ret = ioctl(icoc8, IOCTL_ICOC8_SETCS, &xctl);	
+		if (ret != 0)
+		{
+			printf("transfer_ic8_byte: IOCTL_ICOC8_SETCS failed (ret=%d)\n",ret);
+			return -1;
+		}
+
+		return rxbuf[0];
+}
+
+/*-----------------------------------------------------------------------------
+ * void decode_ic8_answer(unsigned char data) 
+ *
+ * check IC8 parity and decode input
+ *---------------------------------------------------------------------------*/
+void decode_ic8_answer(unsigned char data) 
+{
+	unsigned char parity = (data >> 5);
+	unsigned char bitcount = 0;
+	unsigned char inputnr;
+	unsigned char swopen;
+	int i=0;
+
+	for (i=0; i<5; i++)
+	{
+		if (data&(1<<i)) 
+			bitcount++;
+	}
+
+	if ( (bitcount+1) != parity )
+	{
+		printf("IC8 parity error!\n");
+		return;
+	}
+	
+	inputnr = ((data >> 2) & 0x07)+1;
+	swopen = (data & 0x01);
+
+	(swopen)? printf("input %d opened\n",inputnr): printf("input %d closed\n",inputnr);
+
+}
+
+/*-----------------------------------------------------------------------------
+ * read_ic8_thread() 
+ *
+ * read out the IC8 devices connected to the bus
+ *---------------------------------------------------------------------------*/
+void *read_ic8_thread(void *args)
+{
+	unsigned char ans = 0;
+
+	if (nrOfIC8 == 0) 
+		return NULL;
+
+	while(1)
+	{
+get1:
+		ans = transfer_ic8_byte(0, GET1);
+		if (ans == RECIERR)
+			goto get4;
+		if (ans != BUFEMPTY)
+			decode_ic8_answer(ans); 
+		usleep(100000);
+get2:
+		ans = transfer_ic8_byte(0, GET2);
+		if (ans == RECIERR)
+			goto get1;
+		if (ans != BUFEMPTY)
+			decode_ic8_answer(ans); 
+		usleep(100000);
+get3:
+		ans = transfer_ic8_byte(0, GET3);
+		if (ans == RECIERR)
+			goto get2;
+		if (ans != BUFEMPTY)
+			decode_ic8_answer(ans); 
+		usleep(100000);
+get4:
+		ans = transfer_ic8_byte(0, GET4);
+		if ( ans == RECIERR)
+			goto get3;
+		if (ans != BUFEMPTY)
+			decode_ic8_answer(ans); 
+		usleep(100000);
+		goto get1;
+	}
+	return NULL;
+}
+
 /*-----------------------------------------------------------------------------
  * count_nr_of_ic8() 
  *
@@ -238,6 +370,8 @@ int count_nr_of_ic8(void)
  *---------------------------------------------------------------------------*/
 int main(void)
 {
+	pthread_t ic8_thread;
+
 	char icoc8_devname[20] = "/dev/icoc8";
 	char spidev_devname[20] =  "/dev/spidev0.1";
 
@@ -269,6 +403,9 @@ int main(void)
 	// *** count number of IC8 modules on SPI bus ***
 	if (!count_nr_of_ic8())
 		return -1;
+
+	// *** display IC8 inputs on OC8 outputs
+	pthread_create(&ic8_thread, NULL, read_ic8_thread, NULL);
 
 	// ***  display LED pattern on OC8 modules ***
 	if (!display_oc8_patterns())
