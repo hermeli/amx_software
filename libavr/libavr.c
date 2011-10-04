@@ -331,7 +331,7 @@ int open_port(void){
 	return fd_ser;
 }
 
-int avr_initialize(void)
+int avr_open(void)
 {
 	// *** open the device nodes ***
 	avr_t ld;

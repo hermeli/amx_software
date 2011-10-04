@@ -11,7 +11,7 @@ EXECUTABLE=libavr.a
 all: $(SOURCES) $(EXECUTABLE)
 	
 $(EXECUTABLE): $(OBJECTS) 
-	$(AR) rcs $@ $(OBJECTS)
+	$(AR) -rcs $@ $(OBJECTS)
 
 .c.o:
 	$(CC) $(CFLAGS) $< -o $@
