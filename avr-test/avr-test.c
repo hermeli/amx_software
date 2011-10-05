@@ -21,6 +21,9 @@ int main(void)
 	avr_reset_off(avr_library_descriptor);
 
 	sleep(2);
+	
+	printf("wait for events...\n");
+	avr_wait_for_event(avr_library_descriptor);
 
 	avr_close(avr_library_descriptor);
 

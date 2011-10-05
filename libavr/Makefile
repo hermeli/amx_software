@@ -3,7 +3,7 @@ CC=$(CROSS)gcc
 AR=$(CROSS)ar
 LD=$(CROSS)ld
 CFLAGS=-c -Wall
-LDFLAGS=-lpthread
+LDFLAGS=-lpthread -lrt
 SOURCES=libavr.c
 OBJECTS=$(SOURCES:.c=.o)
 EXECUTABLE=libavr.a

@@ -52,6 +52,8 @@ uint8_t avr_reset_all(int ld);
 
 uint8_t avr_close(int ld);
 
+uint8_t avr_wait_for_event(int ld);
+
 #ifdef __cplusplus
 }
 #endif

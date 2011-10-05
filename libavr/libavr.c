@@ -18,11 +18,8 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <errno.h>
-
-#include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
-#include <sys/stat.h>
+#include <mqueue.h>
+#include <string.h>
 
 #include "libavr.h"
 
@@ -30,8 +27,9 @@
 #define QUEUE_MASK				511
 #define SEND_BUFFER_SIZE		512
 #define TEMP_BUFFER_SIZE		16
-#define ANSWER_RECEIVED			"1234"
-#define EVENT_RECEIVED			"4567"
+#define ANSWER_RECEIVED			"/areci"
+#define EVENT_RECEIVED			"/ereci"
+#define MQ_MSG_SIZE				10
 
 typedef struct 
 {
@@ -55,11 +53,6 @@ typedef struct
 	pthread_mutex_t queue_mutex;
 	pthread_mutex_t avr_mutex;
 } avr_struct_t, *avr_t;
-
-struct msgbuf {
-        long mtype;         /* type of message */
-        char mtext[1];      /* message text */
-};
 
 uint8_t enqueue(uint8_t data, queue_t *queue)
 {
@@ -147,204 +140,168 @@ int msleep(unsigned long milisec)
     return 1;
 }
 
+mqd_t open_event(const char *event)
+{
+	struct mq_attr attr;
+	mqd_t mqd;
+	
+	attr.mq_maxmsg = 20;
+	attr.mq_msgsize = MQ_MSG_SIZE;
+	attr.mq_flags = 0;
+
+	mqd = mq_open(event, O_RDWR | O_CREAT, 0664, &attr);
+
+	if (mqd == -1){
+		printf("mq_open failed! errno: %s\n", strerror(errno));
+		return -1;
+	}
+	
+	return mq_unlink(event);
+}
+
+int close_event(const char *event)
+{
+	mqd_t mqd = open_event(event);
+
+	if (mqd == -1){
+		return -1;
+	}
+	
+	return mq_close(mqd);
+}
+
 int set_event(const char *event)
 {
-	key_t           msgKey;
-	int             flag;
-	struct msgbuf   buff;
-	int             sem;
+	mqd_t mqd;
 
-	printf( "Start.\n" );
-        
-	flag = IPC_CREAT|IPC_EXCL;
+	printf( "Start set_event.\n" );
 
-	if((msgKey = (key_t)atol(event)) <= 0 )
+	mqd = open_event(event);
+	
+	if (mqd == -1){
+		printf("error: event open failed.\n");
 		return 1;
-
-	flag |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
-	sem  = (int) msgget(msgKey, flag);
-
-	if (sem == -1){
-		if( errno == EEXIST )
-		{
-			flag &= ~IPC_EXCL;
-			sem = (int) msgget(msgKey, flag);
-			
-			if (msgctl(sem, IPC_RMID, NULL ) != 0)
-				return 1;
-
-			sem = (int) msgget(msgKey, flag);
-			
-			if (sem == -1)
-				return 1;
-		}
 	}
-	else
+
+	printf("post event...\n");
+
+	if (mq_send(mqd, "set", 3, 0) < 0)
+		return 1;
+	
+	/*	
+	printf("receive ok...\n");
+
+	if(msgrcv(sem, &buff, 1, 200, 0) < 0)
 		return 1;
 
-	printf("Semaphore created. \n");
-
-	buff.mtype = 123;
-
-	if (msgsnd( sem, &buff, 1, 0 ) < 0)
-		return 1;
-
-	printf("Semaphore Posted. \n");
-
-	if( msgrcv( sem, &buff, 1, 0, 0 ) < 0 )
-		return 1;
+	printf("delete event.\n");
 
 	msgctl(sem, 0, IPC_RMID );
-
-	printf("Semaphore deleted.\n");
+	*/
+	
 	printf("Stop.\n");
 
 	return 0;
 }
 
-int sem_shared_wait_timed( int sem, unsigned long timelimit)
+int sem_shared_wait_timed(mqd_t mqd, unsigned long timelimit)
 {
-	struct msgbuf           buff;
+	fd_set rfds;
+	char buff[MQ_MSG_SIZE];
 	struct timeval          timeOut;
-	int                     msg[1];
 	int                     nRet=0;
+	
+	printf("timelimit %lx\n", timelimit);
 
 	timeOut.tv_sec  = timelimit / 1000;
 	timeOut.tv_usec = (timelimit % 1000) * 1000;
 
-	msg[0] = sem;
+	printf("segment id %x\n", mqd);
+	
+	FD_ZERO(&rfds);
+	FD_SET(mqd, &rfds);
 
-	nRet = select( 0x1000, (fd_set *)msg, NULL, NULL, &timeOut );
+	printf("select starting...\n");
+	nRet = select(mqd + 1, &rfds, NULL, NULL, &timeOut);
+	
+	printf("select returns %d\n", nRet);
 
-	if(nRet == 0)
+	if(nRet <= 0)
 		return 3;
 
-	if( msgrcv( sem, &buff, 1, 0, 0 ) < 0 )
+	if(mq_receive(mqd, buff, MQ_MSG_SIZE, NULL) < 0)
+	{
+		printf("error mq_receive has errno: %d\n", errno);
 		return 1;
+	}
 		
 	return 0;
 }
 
 int wait_for_event(const char *event)
 {
-	key_t           msgKey;
-	int             flag=0;
-	struct msgbuf   buff;
-	int             sem;
-	int             nRet =0;
+	char buff[MQ_MSG_SIZE];
+	mqd_t mqd;
 
-	printf( "Start.\n" );
+	printf( "Start wait_for_event.\n" );
 
-	if( ( msgKey = (key_t) atol(event) ) <= 0 )
-		return 1;
-
-	flag |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
-
-	sem = (int) msgget( msgKey, flag );
+	mqd = open_event(event);
 	
-	if (sem == -1){
-		if( errno == EEXIST )
-		{
-			flag &= ~IPC_EXCL;
-			sem = (int) msgget( msgKey, flag );
-			if (msgctl(sem, IPC_RMID, NULL ) != 0)
-				return 1;
-
-			sem = (int) msgget( msgKey, flag );
-			if (sem == -1)
-				return 1;
-		}
-		else
-			return 1;
+	if (mqd == -1){
+		printf("error: event open failed.\n");
+		return 1;
 	}
 
-	printf("Semaphore opened. (%x)\n", nRet);
+	printf( "wait for event...\n" );
 
-	if( nRet != 0 )
-          return 1;
-
-	printf( "Try to wait for semaphore.\n" );
-
-	if( msgrcv( sem, &buff, 1, 0, 0 ) < 0 )
+	if(mq_receive(mqd, buff, MQ_MSG_SIZE, NULL) < 0)
+	{
+		printf("error mq_receive has errno: %d\n", errno);
 		return 1;
+	}
 		
-	printf( "Semaphore acquired. (%x)\n", nRet );
-	printf( "Try to post the semaphore.\n" );
+	/*
+	printf( "send ok...\n" );
 
-	buff.mtype = 123;
-	if( msgsnd( sem, &buff, 1, 0 ) < 0 )
+	buff.mtype = 200;
+	if (msgsnd(sem, &buff, 1, 0) < 0)
 		return 1;
-
-	printf( "Semaphore posted. (%x)\n", nRet );
-
-	if( nRet != 0 )
-		return 0;
-
-	printf( "Semaphore closed. (%x)\n", nRet );
+	*/
+		
 	printf( "Stop.\n" );
 
 	return 0;
 }
 
-int wait_for_event_timed(const char *event, int timeout)
+int wait_for_event_timed(const char *event, unsigned long timeout)
 {
-	key_t           msgKey;
-	int             flag=0;
-	struct msgbuf   buff;
-	int             sem;
-	int             nRet =0;
+	mqd_t mqd;
 
-	printf( "Start.\n" );
-
-	if( ( msgKey = (key_t) atol(event) ) <= 0 )
-		return 1;
-
-	flag |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
-
-	sem = (int) msgget( msgKey, flag );
+	printf( "Start wait_for_event_timed.\n" );
+        
+	mqd = open_event(event);
 	
-	if (sem == -1){
-		if( errno == EEXIST )
-		{
-			flag &= ~IPC_EXCL;
-			sem = (int) msgget( msgKey, flag );
-			if (msgctl(sem, IPC_RMID, NULL ) != 0)
-				return 1;
-
-			sem = (int) msgget( msgKey, flag );
-			if (sem == -1)
-				return 1;
-		}
-		else
-			return 1;
+	if (mqd == -1){
+		printf("error: event open failed.\n");
+		return 1;
 	}
 
-	printf("Semaphore opened. (%x)\n", nRet);
+	printf( "wait for event timed...\n" );
 
-	if( nRet != 0 )
-          return 1;
-
-	printf("Try to wait for semaphore.\n");
-
-	if ((nRet = sem_shared_wait_timed(sem, timeout)) == 3) 
+	if (sem_shared_wait_timed(mqd, timeout) == 3) 
 	{
-		printf("Timeout. (%x)\n", nRet);
+		printf("error: timeout\n");
 		return 1;
 	}
 		
-	printf("Semaphore acquired. (%x)\n", nRet);
-	printf("Try to post the semaphore.\n");
+	/*
+	printf( "send ok...\n" );
 
-	buff.mtype = 123;
-	if( msgsnd( sem, &buff, 1, 0 ) < 0 )
+	buff.mtype = 200;
+	if( msgsnd( sem, "set, 1, 0 ) < 0 )
 		return 1;
-
-	printf("Semaphore posted. (%x)\n", nRet);
-
-	if( nRet != 0 )
-		return 0;
-
-	printf("Semaphore closed. (%x)\n", nRet);
+	*/
+		
 	printf("Stop.\n");
 
 	return 0;
@@ -735,6 +692,8 @@ uint8_t avr_transmit(int ld, uint8_t *send_buffer, int send_length,
 
 	// enter critical section for AVR tranfer
 	pthread_mutex_lock(&(avr->avr_mutex));
+	
+	close_event(ANSWER_RECEIVED);
 
 	// send command to AVR
 	if (!avr_send(avr, send_buffer, send_length))

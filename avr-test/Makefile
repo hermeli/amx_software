@@ -4,7 +4,7 @@ AR=$(CROSS)ar
 LD=$(CROSS)ld
 CFLAGS=-c -Wall
 #LDFLAGS=-lpthread -L../libavr -lavr
-LDFLAGS=-lpthread
+LDFLAGS=-lpthread -lrt
 LIBRARIES=../libavr/libavr.a
 SOURCES=avr-test.c
 OBJECTS=$(SOURCES:.c=.o)
