@@ -43,6 +43,7 @@ typedef struct
 	queue_t data_queue;
 
 	pthread_t read_thread;
+	int package_position;
 
 	pthread_mutex_t queue_mutex;
 	pthread_mutex_t avr_mutex;
@@ -99,8 +100,10 @@ int count_queue(queue_t *queue)
 	return count;
 }
 
-void init_queue(queue_t *queue)
+void init_queue(pthread_mutex_t *mutex, queue_t *queue)
 {
+	queue->mutex = mutex;
+	
 	pthread_mutex_lock(queue->mutex);
 	
 	queue->write = 0;
@@ -139,10 +142,14 @@ uint8_t avr_sum(uint8_t *data, int count, uint8_t k)
 
 	for(n = 1; n < count; n++)
 	{		
-		sum = (sum & 0x80) ? (sum << 1) - (*data++) - 1: (sum << 1) - (*data++);
+		sum = (sum & 0x80) ? 
+			((sum << 1) - ((*data++) - 1)): 
+			((sum << 1) - (*data++));
 	}
 	
-	if (sum & 0x80) sum =~ sum;
+	if (sum & 0x80){
+		sum =~ sum;
+	}
 	
 	return sum;
 }
@@ -189,7 +196,7 @@ void enqueue_to_right_queue(avr_t avr, uint8_t *buffer, int length)
 	switch(type)
 	{
 	case 0x01:
-		printf("[IST] Answer=0x%02x\r", buffer[pos]);
+		printf("[IST] Answer=0x%02x\n", buffer[pos]);
 
 		if(length > 1)
 			enqueue(buffer[pos],&(avr->data_queue));
@@ -197,7 +204,7 @@ void enqueue_to_right_queue(avr_t avr, uint8_t *buffer, int length)
 			enqueue(buffer[pos],&(avr->answer_queue));
 		break;
 	case 0x02: 
-		printf("[IST] Event=0x%02x\r", buffer[pos]);
+		printf("[IST] Event=0x%02x\n", buffer[pos]);
 		enqueue(buffer[pos],&(avr->event_queue));
 		break;
 	}
@@ -205,8 +212,8 @@ void enqueue_to_right_queue(avr_t avr, uint8_t *buffer, int length)
 
 void decode_avr_packet(avr_t avr, uint16_t *ptmp, int length)
 {
-	uint8_t tmpbuf[TEMP_BUFFER_SIZE];
-	int tmppos = 0;
+	static uint8_t tmpbuf[TEMP_BUFFER_SIZE];
+	uint8_t sum;
 	uint16_t data;
 	int ret;
 
@@ -219,14 +226,19 @@ void decode_avr_packet(avr_t avr, uint16_t *ptmp, int length)
 			if (data & 0x0080)		// Startbyte
 			{
 				tmpbuf[0]=(uint8_t)data;
-				tmppos=1;
-				enqueue_to_right_queue(avr, tmpbuf, tmppos);
+				avr->package_position = 1;
+				
+				enqueue_to_right_queue(avr, tmpbuf, 
+					avr->package_position);
 			}
 			else
 			{
-				if (tmppos > 0)		// Prüfsumme
+				if (avr->package_position > 0)		// Prüfsumme
 				{
-					if (avr_sum(tmpbuf, tmppos, RECI_SUM) == (uint8_t)data)
+					printf("tmpbuf[0]: %x, pos: %x!\n", tmpbuf[0], avr->package_position);
+					sum = avr_sum(tmpbuf, avr->package_position, 
+						RECI_SUM);
+					if (sum == (uint8_t)(data & 0x00FF))
 					{
 						ret = calculate_right_type(tmpbuf[0]);
 
@@ -238,32 +250,34 @@ void decode_avr_packet(avr_t avr, uint16_t *ptmp, int length)
 							SetEvent(pAvrInitCont->hEv_AvrEvent); 
 						*/
 
-						tmppos=0;
+						avr->package_position = 0;
 					}
 					else
 					{
-						printf("[IST] Warning: CHKSUM error!\r\n");
+						printf("[IST] Warning: CHKSUM error (received: %x, calculated: %x)!\n", (uint8_t)(data & 0x00FF), sum);
+						avr->package_position = 0;
 					}
 				}
 				else 
 				{
-					printf("[IST] Warning: CHKSUM not received!\r\n");
-					tmppos = 0;
+					printf("[IST] Warning: CHKSUM not received!\n");
+					avr->package_position = 0;
 				}
 			}
 		}
 		else					
 		{
-			printf("[IST] Data=0x%02x\r\n", data);
+			printf("[IST] Data=0x%02x\n", data);
 			
-			if ((tmppos > 0) && (tmppos < (TEMP_BUFFER_SIZE - 1)))
+			if ((avr->package_position > 0) && 
+				(avr->package_position < (TEMP_BUFFER_SIZE - 1)))
 			{
-				tmpbuf[tmppos++]=(uint8_t)data;	
-				enqueue_to_right_queue(avr, tmpbuf, tmppos);
-				//Enqueue((BYTE)data,&DataQueue);
+				tmpbuf[avr->package_position++] = (uint8_t)data;	
+				enqueue_to_right_queue(avr, tmpbuf, 
+					avr->package_position);
 			}
 			else 
-				tmppos=0;
+				avr->package_position = 0;
 		}
 	}	
 }
@@ -283,8 +297,8 @@ void *read_from_avr (void *args)
 	
 		if(count == 2)
 		{
-			printf("received 0x%x%02x,\n", buf[1], buf[0]);
 			avr_received = (0xFF00 & (buf[1] << 8)) | buf[0];
+			printf("received 0x%x\n", avr_received);
 			decode_avr_packet(avr, &avr_received, 1);
 		}
 		else
@@ -319,12 +333,47 @@ int open_port(void){
 	}
 
 	tcgetattr(fd_ser, &terminal);
+
+	//
+	// Turn off character processing
+	// clear current char size mask, no parity checking,
+	// no output processing, force 8 bit input
+	//
+	terminal.c_cflag &= ~(PARENB);
+
+	//
+	// Input flags - Turn off input processing
+	// convert break to null byte, no CR to NL translation,
+	// no NL to CR translation, don't mark parity errors or breaks
+	// no input parity check, don't strip high bit off,
+	// no XON/XOFF software flow control
+	//
+	terminal.c_iflag &= ~(IGNBRK | BRKINT | ICRNL |
+		            INLCR | PARMRK | INPCK | ISTRIP | IXON);
+	//
+	// Output flags - Turn off output processing
+	// no CR to NL translation, no NL to CR-NL translation,
+	// no NL to CR translation, no column 0 CR suppression,
+	// no Ctrl-D suppression, no fill characters, no case mapping,
+	// no local output processing
+	//
+	// config.c_oflag &= ~(OCRNL | ONLCR | ONLRET |
+	//                     ONOCR | ONOEOT| OFILL | OLCUC | OPOST);
+	terminal.c_oflag = 0;
 	
 	//
 	// No line processing:
-	// canonical mode off
+	// echo off, echo newline off, canonical mode off, 
+	// extended input processing off, signal chars off
 	//
-	terminal.c_lflag &= ~(ICANON);
+	terminal.c_lflag &= ~(ECHO | ECHONL | ICANON | IEXTEN | ISIG);
+	
+	//
+	// One input byte is enough to return from read()
+	// Inter-character timer off
+	//
+	terminal.c_cc[VMIN]  = 2;
+	terminal.c_cc[VTIME] = 10;
 
 	tcflush(fd_ser,TCIOFLUSH);
 	tcsetattr(fd_ser,TCSANOW,&terminal);
@@ -337,32 +386,47 @@ int avr_open(void)
 	avr_t ld;
 	int rc;
 	
+	printf("malloc structure... \n");
 	ld = (avr_t)malloc(sizeof(avr_struct_t));
 	
+	if(ld == NULL)
+	{
+		printf("malloc failed\n");
+		return 0;
+	}
+	
+	printf("open port... \n");
 	ld->port = open_port();
 
 	if(ld->port < 0) {
+		printf("open_port failed\n");
 		free(ld);
 		return 0;
 	}
 	
+	printf("init mutex... \n");
 	if((rc = pthread_mutex_init(&(ld->queue_mutex), NULL)))
 	{
+		printf("pthread_mutex_init failed\n");
 		free(ld);
 		return 0;
 	}
 	
 	if((rc = pthread_mutex_init(&(ld->avr_mutex), NULL)))
 	{
+		printf("pthread_mutex_init failed\n");
 		free(ld);
 		return 0;
 	}
 	
-	init_queue(&(ld->event_queue));
-	init_queue(&(ld->answer_queue));
-	init_queue(&(ld->data_queue));
+	printf("init queue... \n");
+	init_queue(&(ld->queue_mutex), &(ld->event_queue));
+	init_queue(&(ld->queue_mutex), &(ld->answer_queue));
+	init_queue(&(ld->queue_mutex), &(ld->data_queue));
 
-	pthread_create(&(ld->read_thread), (void *)ld, read_from_avr, NULL);
+	printf("starting thread... \n");
+	ld->package_position = 0;
+	pthread_create(&(ld->read_thread), NULL, read_from_avr, (void *)ld);
 	
 	return (int)ld;
 }
@@ -400,15 +464,15 @@ uint8_t avr_wait_and_check_answer(avr_t avr, uint8_t command)
 
 uint8_t avr_send(avr_t avr, uint8_t *send_buffer, int length)
 {
-	uint16_t  *tx_buffer;
+	uint8_t  *tx_buffer;
 	int i;
-	int tx_buffer_lenth = length*2+2;
+	int tx_buffer_length = length*2+2;
 
 	// calculating sending sum
 	uint8_t sum = avr_sum(send_buffer, length, SEND_SUM);
 	
 	// allocating new byte buffer and stuffing 9 bit transfer data
-	tx_buffer = (uint16_t*)malloc(tx_buffer_lenth);
+	tx_buffer = (uint8_t*)malloc(tx_buffer_length);
 
 	if(tx_buffer == NULL)
 	{
@@ -416,12 +480,35 @@ uint8_t avr_send(avr_t avr, uint8_t *send_buffer, int length)
 	}
 	
 	for (i = 0; i < length; i++)
-		tx_buffer[i] = send_buffer[i];
+	{
+		tx_buffer[i * 2] = send_buffer[i];
+		tx_buffer[(i * 2) + 1] = 0;
+	}
 		
-	tx_buffer[0] |= 0x0100;
-	tx_buffer[length] = sum | 0x0100;
+	tx_buffer[1] |= 0x01;
+	tx_buffer[tx_buffer_length - 2] = sum;
+	tx_buffer[tx_buffer_length - 1] = 0x01;
+	
+	printf("sending: ");
+		
+	for (i = 0; i < tx_buffer_length; i++)
+	{
+		printf("%02x, ", tx_buffer[i]);
+	}
+	
+	printf("\n");
 
-	write(avr->port, tx_buffer, tx_buffer_lenth);
+	i = write(avr->port, tx_buffer, tx_buffer_length);
+	
+	if(i < 0)
+	{
+		printf("error: write returns errno: %d\n", errno);
+	}
+	else
+	{
+		printf("%d bytes written\n", i);
+	}
+	
 	
 	free(tx_buffer);
 	return 1;

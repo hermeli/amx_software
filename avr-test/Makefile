@@ -11,6 +11,7 @@ OBJECTS=$(SOURCES:.c=.o)
 EXECUTABLE=avr-test
 
 all: $(SOURCES) $(EXECUTABLE)
+	scp $(EXECUTABLE) root@10.2.24.95:~/
 	
 $(EXECUTABLE): $(OBJECTS) 
 	$(CC) $(LDFLAGS) $(OBJECTS) $(LIBRARIES) -o $@

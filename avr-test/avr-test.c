@@ -6,13 +6,19 @@
 
 int main(void)
 {
+	printf("open avr...\n");
 	int avr_library_descriptor = avr_open();
 
-	avr_reset_off(avr_library_descriptor);
+	if(avr_library_descriptor == 0)
+		return 1;
+
+	printf("send reset all to avr...\n");
+	avr_reset_all(avr_library_descriptor);
 
 	sleep(2);
 	
-	avr_reset_on(avr_library_descriptor);
+	printf("send reset off to avr...\n");
+	avr_reset_off(avr_library_descriptor);
 
 	sleep(2);
 
