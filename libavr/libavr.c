@@ -19,12 +19,19 @@
 #include <pthread.h>
 #include <errno.h>
 
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <sys/stat.h>
+
 #include "libavr.h"
 
 #define DEVICE 					"/dev/ttyS4"
 #define QUEUE_MASK				511
 #define SEND_BUFFER_SIZE		512
 #define TEMP_BUFFER_SIZE		16
+#define ANSWER_RECEIVED			"1234"
+#define EVENT_RECEIVED			"4567"
 
 typedef struct 
 {
@@ -48,6 +55,11 @@ typedef struct
 	pthread_mutex_t queue_mutex;
 	pthread_mutex_t avr_mutex;
 } avr_struct_t, *avr_t;
+
+struct msgbuf {
+        long mtype;         /* type of message */
+        char mtext[1];      /* message text */
+};
 
 uint8_t enqueue(uint8_t data, queue_t *queue)
 {
@@ -133,6 +145,209 @@ int msleep(unsigned long milisec)
     __nsleep(&req,&rem);
     
     return 1;
+}
+
+int set_event(const char *event)
+{
+	key_t           msgKey;
+	int             flag;
+	struct msgbuf   buff;
+	int             sem;
+
+	printf( "Start.\n" );
+        
+	flag = IPC_CREAT|IPC_EXCL;
+
+	if((msgKey = (key_t)atol(event)) <= 0 )
+		return 1;
+
+	flag |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
+	sem  = (int) msgget(msgKey, flag);
+
+	if (sem == -1){
+		if( errno == EEXIST )
+		{
+			flag &= ~IPC_EXCL;
+			sem = (int) msgget(msgKey, flag);
+			
+			if (msgctl(sem, IPC_RMID, NULL ) != 0)
+				return 1;
+
+			sem = (int) msgget(msgKey, flag);
+			
+			if (sem == -1)
+				return 1;
+		}
+	}
+	else
+		return 1;
+
+	printf("Semaphore created. \n");
+
+	buff.mtype = 123;
+
+	if (msgsnd( sem, &buff, 1, 0 ) < 0)
+		return 1;
+
+	printf("Semaphore Posted. \n");
+
+	if( msgrcv( sem, &buff, 1, 0, 0 ) < 0 )
+		return 1;
+
+	msgctl(sem, 0, IPC_RMID );
+
+	printf("Semaphore deleted.\n");
+	printf("Stop.\n");
+
+	return 0;
+}
+
+int sem_shared_wait_timed( int sem, unsigned long timelimit)
+{
+	struct msgbuf           buff;
+	struct timeval          timeOut;
+	int                     msg[1];
+	int                     nRet=0;
+
+	timeOut.tv_sec  = timelimit / 1000;
+	timeOut.tv_usec = (timelimit % 1000) * 1000;
+
+	msg[0] = sem;
+
+	nRet = select( 0x1000, (fd_set *)msg, NULL, NULL, &timeOut );
+
+	if(nRet == 0)
+		return 3;
+
+	if( msgrcv( sem, &buff, 1, 0, 0 ) < 0 )
+		return 1;
+		
+	return 0;
+}
+
+int wait_for_event(const char *event)
+{
+	key_t           msgKey;
+	int             flag=0;
+	struct msgbuf   buff;
+	int             sem;
+	int             nRet =0;
+
+	printf( "Start.\n" );
+
+	if( ( msgKey = (key_t) atol(event) ) <= 0 )
+		return 1;
+
+	flag |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
+
+	sem = (int) msgget( msgKey, flag );
+	
+	if (sem == -1){
+		if( errno == EEXIST )
+		{
+			flag &= ~IPC_EXCL;
+			sem = (int) msgget( msgKey, flag );
+			if (msgctl(sem, IPC_RMID, NULL ) != 0)
+				return 1;
+
+			sem = (int) msgget( msgKey, flag );
+			if (sem == -1)
+				return 1;
+		}
+		else
+			return 1;
+	}
+
+	printf("Semaphore opened. (%x)\n", nRet);
+
+	if( nRet != 0 )
+          return 1;
+
+	printf( "Try to wait for semaphore.\n" );
+
+	if( msgrcv( sem, &buff, 1, 0, 0 ) < 0 )
+		return 1;
+		
+	printf( "Semaphore acquired. (%x)\n", nRet );
+	printf( "Try to post the semaphore.\n" );
+
+	buff.mtype = 123;
+	if( msgsnd( sem, &buff, 1, 0 ) < 0 )
+		return 1;
+
+	printf( "Semaphore posted. (%x)\n", nRet );
+
+	if( nRet != 0 )
+		return 0;
+
+	printf( "Semaphore closed. (%x)\n", nRet );
+	printf( "Stop.\n" );
+
+	return 0;
+}
+
+int wait_for_event_timed(const char *event, int timeout)
+{
+	key_t           msgKey;
+	int             flag=0;
+	struct msgbuf   buff;
+	int             sem;
+	int             nRet =0;
+
+	printf( "Start.\n" );
+
+	if( ( msgKey = (key_t) atol(event) ) <= 0 )
+		return 1;
+
+	flag |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
+
+	sem = (int) msgget( msgKey, flag );
+	
+	if (sem == -1){
+		if( errno == EEXIST )
+		{
+			flag &= ~IPC_EXCL;
+			sem = (int) msgget( msgKey, flag );
+			if (msgctl(sem, IPC_RMID, NULL ) != 0)
+				return 1;
+
+			sem = (int) msgget( msgKey, flag );
+			if (sem == -1)
+				return 1;
+		}
+		else
+			return 1;
+	}
+
+	printf("Semaphore opened. (%x)\n", nRet);
+
+	if( nRet != 0 )
+          return 1;
+
+	printf("Try to wait for semaphore.\n");
+
+	if ((nRet = sem_shared_wait_timed(sem, timeout)) == 3) 
+	{
+		printf("Timeout. (%x)\n", nRet);
+		return 1;
+	}
+		
+	printf("Semaphore acquired. (%x)\n", nRet);
+	printf("Try to post the semaphore.\n");
+
+	buff.mtype = 123;
+	if( msgsnd( sem, &buff, 1, 0 ) < 0 )
+		return 1;
+
+	printf("Semaphore posted. (%x)\n", nRet);
+
+	if( nRet != 0 )
+		return 0;
+
+	printf("Semaphore closed. (%x)\n", nRet);
+	printf("Stop.\n");
+
+	return 0;
 }
 
 uint8_t avr_sum(uint8_t *data, int count, uint8_t k)
@@ -235,20 +450,17 @@ void decode_avr_packet(avr_t avr, uint16_t *ptmp, int length)
 			{
 				if (avr->package_position > 0)		// Prüfsumme
 				{
-					printf("tmpbuf[0]: %x, pos: %x!\n", tmpbuf[0], avr->package_position);
 					sum = avr_sum(tmpbuf, avr->package_position, 
 						RECI_SUM);
 					if (sum == (uint8_t)(data & 0x00FF))
 					{
 						ret = calculate_right_type(tmpbuf[0]);
 
-						/* 
 						if(ret & 0x01)
-							SetEvent(pAvrInitCont->hEv_AvrAnswer);
+							set_event(ANSWER_RECEIVED);
 
 						if(ret & 0x02)
-							SetEvent(pAvrInitCont->hEv_AvrEvent); 
-						*/
+							set_event(EVENT_RECEIVED); 
 
 						avr->package_position = 0;
 					}
@@ -434,18 +646,12 @@ int avr_open(void)
 uint8_t avr_wait_and_check_answer(avr_t avr, uint8_t command)
 {
 	uint8_t avr_answer;
-	int timeout = 0;
-
-	while(timeout++ < 100)
-	{
-		if(count_queue(&(avr->answer_queue)) > 0)
-			break;
-			
-		msleep(10);
-	}
 	
-	if(timeout == 100)
+	if(wait_for_event_timed(ANSWER_RECEIVED, 2000))
+	{
+		printf("[AVR] Error: Timeout, no answer received\r\n");
 		return 0;
+	}
 
 	if (!dequeue(&avr_answer, &(avr->answer_queue)))
 	{
@@ -503,10 +709,6 @@ uint8_t avr_send(avr_t avr, uint8_t *send_buffer, int length)
 	if(i < 0)
 	{
 		printf("error: write returns errno: %d\n", errno);
-	}
-	else
-	{
-		printf("%d bytes written\n", i);
 	}
 	
 	
@@ -638,4 +840,9 @@ uint8_t avr_close(int ld)
 	free(avr);
 	
 	return 1;
+}
+
+uint8_t avr_wait_for_event(int ld)
+{
+	return wait_for_event(EVENT_RECEIVED);
 }
