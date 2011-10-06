@@ -6,6 +6,11 @@
 
 int main(void)
 {
+	uint8_t buffer[20];
+	int count;
+	uint8_t exit_app = 0;
+	int i;
+	
 	printf("open avr...\n");
 	int avr_library_descriptor = avr_open();
 
@@ -22,10 +27,31 @@ int main(void)
 
 	sleep(2);
 	
-	printf("wait for events...\n");
-	avr_wait_for_event(avr_library_descriptor);
+	while(1)
+	{
+		printf("wait for events...\n");
+		avr_wait_for_event(avr_library_descriptor);
 
-	avr_close(avr_library_descriptor);
+		count = sizeof(buffer);
+		avr_get_events(avr_library_descriptor, buffer, &count);
+		
+		printf("event(s) received: ");
+		
+		for (i = 0; i < count; i++)
+		{
+			printf("%02x, ", buffer[i]);
+			
+			if(buffer[i] == 0xa3)
+				exit_app = 1;
+		}
+		
+		printf("\n");
+		
+		if(exit_app == 1)
+			break;
+	}
 
 	return 0;
+	
+	avr_close(avr_library_descriptor);
 }
