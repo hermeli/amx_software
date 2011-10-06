@@ -32,6 +32,8 @@
 #define	AVR_READHIGH		0x8B
 #define	AVR_READLOW			0x8C
 
+//#define DEBUG
+
 #ifdef __cplusplus
 extern "C" {
 #endif

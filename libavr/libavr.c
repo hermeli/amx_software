@@ -174,7 +174,9 @@ int set_event(const char *event)
 {
 	mqd_t mqd;
 
+#ifdef DEBUG
 	printf( "Start set_event.\n" );
+#endif
 
 	mqd = open_event(event);
 	
@@ -183,7 +185,9 @@ int set_event(const char *event)
 		return 1;
 	}
 
+#ifdef DEBUG
 	printf("post event...\n");
+#endif
 
 	if (mq_send(mqd, "set", 3, 0) < 0)
 		return 1;
@@ -199,7 +203,9 @@ int set_event(const char *event)
 	msgctl(sem, 0, IPC_RMID );
 	*/
 	
+#ifdef DEBUG
 	printf("Stop.\n");
+#endif
 
 	return 0;
 }
@@ -211,20 +217,28 @@ int sem_shared_wait_timed(mqd_t mqd, unsigned long timelimit)
 	struct timeval          timeOut;
 	int                     nRet=0;
 	
+#ifdef DEBUG
 	printf("timelimit %lx\n", timelimit);
+#endif
 
 	timeOut.tv_sec  = timelimit / 1000;
 	timeOut.tv_usec = (timelimit % 1000) * 1000;
 
+#ifdef DEBUG
 	printf("segment id %x\n", mqd);
+#endif
 	
 	FD_ZERO(&rfds);
 	FD_SET(mqd, &rfds);
 
+#ifdef DEBUG
 	printf("select starting...\n");
+#endif
 	nRet = select(mqd + 1, &rfds, NULL, NULL, &timeOut);
 	
+#ifdef DEBUG
 	printf("select returns %d\n", nRet);
+#endif
 
 	if(nRet <= 0)
 		return 3;
@@ -243,7 +257,9 @@ int wait_for_event(const char *event)
 	char buff[MQ_MSG_SIZE];
 	mqd_t mqd;
 
+#ifdef DEBUG
 	printf( "Start wait_for_event.\n" );
+#endif
 
 	mqd = open_event(event);
 	
@@ -252,7 +268,9 @@ int wait_for_event(const char *event)
 		return 1;
 	}
 
+#ifdef DEBUG
 	printf( "wait for event...\n" );
+#endif
 
 	if(mq_receive(mqd, buff, MQ_MSG_SIZE, NULL) < 0)
 	{
@@ -268,7 +286,9 @@ int wait_for_event(const char *event)
 		return 1;
 	*/
 		
+#ifdef DEBUG
 	printf( "Stop.\n" );
+#endif
 
 	return 0;
 }
@@ -277,7 +297,9 @@ int wait_for_event_timed(const char *event, unsigned long timeout)
 {
 	mqd_t mqd;
 
+#ifdef DEBUG
 	printf( "Start wait_for_event_timed.\n" );
+#endif
         
 	mqd = open_event(event);
 	
@@ -286,7 +308,9 @@ int wait_for_event_timed(const char *event, unsigned long timeout)
 		return 1;
 	}
 
+#ifdef DEBUG
 	printf( "wait for event timed...\n" );
+#endif
 
 	if (sem_shared_wait_timed(mqd, timeout) == 3) 
 	{
@@ -302,7 +326,9 @@ int wait_for_event_timed(const char *event, unsigned long timeout)
 		return 1;
 	*/
 		
+#ifdef DEBUG
 	printf("Stop.\n");
+#endif
 
 	return 0;
 }
@@ -368,7 +394,9 @@ void enqueue_to_right_queue(avr_t avr, uint8_t *buffer, int length)
 	switch(type)
 	{
 	case 0x01:
+#ifdef DEBUG
 		printf("[IST] Answer=0x%02x\n", buffer[pos]);
+#endif
 
 		if(length > 1)
 			enqueue(buffer[pos],&(avr->data_queue));
@@ -376,7 +404,9 @@ void enqueue_to_right_queue(avr_t avr, uint8_t *buffer, int length)
 			enqueue(buffer[pos],&(avr->answer_queue));
 		break;
 	case 0x02: 
+#ifdef DEBUG
 		printf("[IST] Event=0x%02x\n", buffer[pos]);
+#endif
 		enqueue(buffer[pos],&(avr->event_queue));
 		break;
 	}
@@ -436,7 +466,9 @@ void decode_avr_packet(avr_t avr, uint16_t *ptmp, int length)
 		}
 		else					
 		{
+#ifdef DEBUG
 			printf("[IST] Data=0x%02x\n", data);
+#endif
 			
 			if ((avr->package_position > 0) && 
 				(avr->package_position < (TEMP_BUFFER_SIZE - 1)))
@@ -458,7 +490,9 @@ void *read_from_avr (void *args)
 	uint16_t avr_received;
 	int count;
 
+#ifdef DEBUG
 	printf("start reading from avr\n");
+#endif
 
 	while(1)
 	{
@@ -467,7 +501,9 @@ void *read_from_avr (void *args)
 		if(count == 2)
 		{
 			avr_received = (0xFF00 & (buf[1] << 8)) | buf[0];
+#ifdef DEBUG
 			printf("received 0x%x\n", avr_received);
+#endif
 			decode_avr_packet(avr, &avr_received, 1);
 		}
 		else
@@ -476,7 +512,7 @@ void *read_from_avr (void *args)
 			
 			if(count == -1)
 			{
-				printf("error: errno: %d!", errno);
+				printf("error in read_from_avr: %s!", strerror(errno));
 				
 				if(errno == EBADF)
 				{
@@ -555,7 +591,9 @@ int avr_open(void)
 	avr_t ld;
 	int rc;
 	
+#ifdef DEBUG
 	printf("malloc structure... \n");
+#endif
 	ld = (avr_t)malloc(sizeof(avr_struct_t));
 	
 	if(ld == NULL)
@@ -564,7 +602,9 @@ int avr_open(void)
 		return 0;
 	}
 	
+#ifdef DEBUG
 	printf("open port... \n");
+#endif
 	ld->port = open_port();
 
 	if(ld->port < 0) {
@@ -573,7 +613,9 @@ int avr_open(void)
 		return 0;
 	}
 	
+#ifdef DEBUG
 	printf("init mutex... \n");
+#endif
 	if((rc = pthread_mutex_init(&(ld->queue_mutex), NULL)))
 	{
 		printf("pthread_mutex_init failed\n");
@@ -588,12 +630,16 @@ int avr_open(void)
 		return 0;
 	}
 	
+#ifdef DEBUG
 	printf("init queue... \n");
+#endif
 	init_queue(&(ld->queue_mutex), &(ld->event_queue));
 	init_queue(&(ld->queue_mutex), &(ld->answer_queue));
 	init_queue(&(ld->queue_mutex), &(ld->data_queue));
 
+#ifdef DEBUG
 	printf("starting thread... \n");
+#endif
 	ld->package_position = 0;
 	pthread_create(&(ld->read_thread), NULL, read_from_avr, (void *)ld);
 	
@@ -652,6 +698,7 @@ uint8_t avr_send(avr_t avr, uint8_t *send_buffer, int length)
 	tx_buffer[tx_buffer_length - 2] = sum;
 	tx_buffer[tx_buffer_length - 1] = 0x01;
 	
+#ifdef DEBUG
 	printf("sending: ");
 		
 	for (i = 0; i < tx_buffer_length; i++)
@@ -660,6 +707,7 @@ uint8_t avr_send(avr_t avr, uint8_t *send_buffer, int length)
 	}
 	
 	printf("\n");
+#endif
 
 	i = write(avr->port, tx_buffer, tx_buffer_length);
 	
@@ -736,7 +784,7 @@ uint8_t avr_get_events(int ld, uint8_t *receive_buffer, int *receive_buffer_leng
 		return 0;
 	}
 
-	// enter critical section for AVR tranfer
+	// enter critical section for AVR transfer
 	pthread_mutex_lock(&(avr->avr_mutex));
 
 	receive_count = 0;
@@ -797,6 +845,9 @@ uint8_t avr_close(int ld)
 	pthread_mutex_destroy(&(avr->queue_mutex));
 	
 	free(avr);
+	
+	close_event(ANSWER_RECEIVED);
+	close_event(EVENT_RECEIVED);
 	
 	return 1;
 }
