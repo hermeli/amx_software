@@ -358,7 +358,10 @@ int count_nr_of_ic8(void)
 		if (rx[0]==IC8MODULE)
 			nrOfIC8++;
 		else {
-			break;
+			if (rx[0]==RECIERR)
+				i--;
+			else
+				break;
 		}
 	}
 	
