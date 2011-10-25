@@ -16,16 +16,23 @@ int main(void)
 
 	if(avr_library_descriptor == 0)
 		return 1;
+	
+	printf("send reset on to avr...\n");
+	avr_reset_on(avr_library_descriptor);
 
-	printf("send reset all to avr...\n");
-	avr_reset_all(avr_library_descriptor);
-
-	sleep(2);
+	sleep(1);
 	
 	printf("send reset off to avr...\n");
 	avr_reset_off(avr_library_descriptor);
 
-	sleep(2);
+	sleep(1);
+
+	printf("send reset all to avr...\n");
+	avr_reset_all(avr_library_descriptor);
+
+	sleep(1);
+	
+	avr_clear_events(avr_library_descriptor);
 	
 	while(1)
 	{
@@ -50,6 +57,10 @@ int main(void)
 		if(exit_app == 1)
 			break;
 	}
+	
+	avr_read_addr(avr_library_descriptor, 0x0c, buffer);
+	
+	printf("input IN1 state: %02x\n", buffer[0]);
 
 	return 0;
 	

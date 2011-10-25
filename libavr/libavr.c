@@ -341,7 +341,7 @@ uint8_t avr_sum(uint8_t *data, int count, uint8_t k)
 	for(n = 1; n < count; n++)
 	{		
 		sum = (sum & 0x80) ? 
-			((sum << 1) - ((*data++) - 1)): 
+			((sum << 1) - (*data++) - 1): 
 			((sum << 1) - (*data++));
 	}
 	
@@ -416,6 +416,9 @@ void decode_avr_packet(avr_t avr, uint16_t *ptmp, int length)
 {
 	static uint8_t tmpbuf[TEMP_BUFFER_SIZE];
 	uint8_t sum;
+#ifdef DEBUG
+	uint8_t i;
+#endif
 	uint16_t data;
 	int ret;
 
@@ -437,6 +440,16 @@ void decode_avr_packet(avr_t avr, uint16_t *ptmp, int length)
 			{
 				if (avr->package_position > 0)		// Prüfsumme
 				{
+#ifdef DEBUG
+					printf("[IST] avr->package_position=0x%02x\n", avr->package_position);
+		
+					printf("[IST] tmpbuf: ");
+					for (i = 0; i < avr->package_position; i++)
+					{
+						printf("%02x, ", tmpbuf[i]);
+					}
+					printf("\n");
+#endif
 					sum = avr_sum(tmpbuf, avr->package_position, 
 						RECI_SUM);
 					if (sum == (uint8_t)(data & 0x00FF))
@@ -467,7 +480,7 @@ void decode_avr_packet(avr_t avr, uint16_t *ptmp, int length)
 		else					
 		{
 #ifdef DEBUG
-			printf("[IST] Data=0x%02x\n", data);
+			printf("[IST] Data to queue: 0x%02x\n", data);
 #endif
 			
 			if ((avr->package_position > 0) && 
@@ -720,7 +733,21 @@ uint8_t avr_send(avr_t avr, uint8_t *send_buffer, int length)
 	free(tx_buffer);
 	return 1;
 }
+
+uint8_t avr_read_addr(int ld, uint8_t addr, uint8_t *value)
+{
+    uint8_t read_buffer[2];
+    uint8_t send_buffer[2] = { AVR_READ, addr };	// Doku avr_interface.txt: ain1_state (10Ch):
+    int read_buffer_length = sizeof(read_buffer);
+    uint8_t ret;
+
+    ret = avr_transmit(ld, send_buffer, sizeof(send_buffer), read_buffer,
+        &read_buffer_length);
+        
+	*value = read_buffer[0];
 	
+	return ret;
+}
 
 uint8_t avr_transmit(int ld, uint8_t *send_buffer, int send_length,
 	uint8_t *receive_buffer, int *receive_buffer_length)
@@ -805,7 +832,7 @@ uint8_t avr_reset_on(int ld)
 {
 	uint8_t read_buffer[2];
 	uint8_t send_buffer[2] = { AVR_RESET_ON, 0 };
-	int read_buffer_length = 4;
+	int read_buffer_length = sizeof(read_buffer);
 	
 	return avr_transmit(ld, send_buffer, 1, read_buffer, 
 		&read_buffer_length);
@@ -815,7 +842,7 @@ uint8_t avr_reset_off(int ld)
 {
 	uint8_t read_buffer[2];
 	uint8_t send_buffer[2] = { AVR_RESET_OFF, 0 };
-	int read_buffer_length = 4;
+	int read_buffer_length = sizeof(read_buffer);
 	
 	return avr_transmit(ld, send_buffer, 1, read_buffer,
 		&read_buffer_length);
@@ -825,7 +852,7 @@ uint8_t avr_reset_all(int ld)
 {
 	uint8_t read_buffer[2];
 	uint8_t send_buffer[2] = { AVR_RESET_ALL, 0 };
-	int read_buffer_length = 4;
+	int read_buffer_length = sizeof(read_buffer);
 	
 	return avr_transmit(ld, send_buffer, 1, read_buffer,
 		&read_buffer_length);
@@ -850,6 +877,16 @@ uint8_t avr_close(int ld)
 	close_event(EVENT_RECEIVED);
 	
 	return 1;
+}
+
+uint8_t avr_clear_events(int ld)
+{
+	uint8_t read_buffer[2];
+	uint8_t send_buffer[2] = { AVR_CLEAR_EVENTS, 0 };
+	int read_buffer_length = sizeof(read_buffer);
+	
+	return avr_transmit(ld, send_buffer, 1, read_buffer,
+		&read_buffer_length);
 }
 
 uint8_t avr_wait_for_event(int ld)
