@@ -6,7 +6,7 @@ CFLAGS=-c -Wall
 LDFLAGS=-lpthread
 SOURCES=icoc8-test.c
 OBJECTS=$(SOURCES:.c=.o)
-EXECUTABLE=icoc8-test
+EXECUTABLE=icoc8-test.bin
 
 all: $(SOURCES) $(EXECUTABLE)
 	

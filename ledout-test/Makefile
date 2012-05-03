@@ -9,7 +9,7 @@ CFLAGS=-c -Wall
 LDFLAGS=-static -lpthread
 SOURCES=$(TARGET).c
 OBJECTS=$(SOURCES:.c=.o)
-EXECUTABLE=$(TARGET)
+EXECUTABLE=$(TARGET).bin
 # LD_LIBRARY_PATH=/home/llandis/amm/amx-buildroot/output/toolchain/uClibc-0.9.32/lib
 
 all: $(SOURCES) $(EXECUTABLE)

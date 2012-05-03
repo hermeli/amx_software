@@ -1,3 +1,5 @@
 avr-test/avr-test
 *.o
 *.a
+*.bin
+
