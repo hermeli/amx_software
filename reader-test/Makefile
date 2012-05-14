@@ -3,18 +3,15 @@ CC=$(CROSS)gcc
 AR=$(CROSS)ar
 LD=$(CROSS)ld
 CFLAGS=-c -Wall
-#LDFLAGS=-lpthread -L../libavr -lavr
-LDFLAGS=-lpthread -lrt
-LIBRARIES=../libavr/libavr.a
-SOURCES=avr-test.c
+LDFLAGS=-lpthread
+SOURCES=reader-test.c
 OBJECTS=$(SOURCES:.c=.o)
-EXECUTABLE=avr-test
+EXECUTABLE=reader-test.bin
 
 all: $(SOURCES) $(EXECUTABLE)
-	scp $(EXECUTABLE) root@10.2.24.95:~/
 	
 $(EXECUTABLE): $(OBJECTS) 
-	$(CC) $(LDFLAGS) $(OBJECTS) $(LIBRARIES) -o $@
+	$(CC) $(LDFLAGS) $(OBJECTS) -o $@
 
 .c.o:
 	$(CC) $(CFLAGS) $< -o $@

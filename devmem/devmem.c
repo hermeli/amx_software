@@ -66,7 +66,6 @@ int main(int argc, char **argv) {
 	if(argc > 2)
 		access_type = tolower(argv[2][0]);
 
-
     if((fd = open("/dev/mem", O_RDWR | O_SYNC)) == -1) FATAL; 
     fflush(stdout);
     
